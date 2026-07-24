@@ -19,6 +19,7 @@ from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QWidget
 
 from i18n import channel_name, tr
+from log_handler import log_error, log_info, log_warn
 from sonar_ctrl import SonarCtrl
 from theme import DEFAULT_THEME, ThemeColors
 
@@ -134,11 +135,19 @@ def _build_action_map() -> dict[str, tuple[int, str, str, int]]:
 
 
 class HotkeyManager(QObject):
-    """Register and dispatch global hotkeys. Thread-safe via Qt signals."""
+    """Register and dispatch global hotkeys. Thread-safe via Qt signals.
+
+    All Sonar API calls are deferred to the Qt main thread via signals.
+    The keyboard hook callback ONLY emits signals and returns immediately —
+    blocking HTTP calls in the hook thread would cause Windows to unregister
+    the low-level keyboard hook after ~200 ms.
+    """
 
     # Emitted from keyboard thread → delivered to main thread
     _toastRequested = Signal(str)
     _toggleRequested = Signal()
+    _muteRequested = Signal(str, str)        # channel_key, slider_key
+    _volumeRequested = Signal(str, str, int)  # channel_key, slider_key, direction
 
     def __init__(self, sonar: SonarCtrl,
                  theme: ThemeColors | None = None) -> None:
@@ -155,8 +164,10 @@ class HotkeyManager(QObject):
         self._toggle_callback: Callable[[], None] | None = None
         self._lock_callback: Callable[[], bool] | None = None
 
-        # Thread-safe: _toastRequested signal → show toast in main thread
+        # Thread-safe: signals → Qt main thread slots
         self._toastRequested.connect(self._show_toast_safe)
+        self._muteRequested.connect(self._on_mute_action)
+        self._volumeRequested.connect(self._on_volume_action)
 
     # ── Toast (thread-safe) ───────────────────────────────────────────
 
@@ -191,6 +202,7 @@ class HotkeyManager(QObject):
         self.unregister_all()
         self._hotkeys_config = hotkeys
 
+        count = 0
         for config_id, combo in hotkeys.items():
             if not combo:
                 continue
@@ -200,9 +212,16 @@ class HotkeyManager(QObject):
                     lambda cid=config_id: self._on_hotkey(cid),
                     suppress=False,
                 )
+                count += 1
             except Exception as e:
                 import sys
                 print(f"[SonarMix] Failed to register hotkey {combo}: {e}", file=sys.stderr)
+                log_error(f"Failed to register {config_id} ({combo}): {e}")
+
+        if count > 0:
+            log_info(f"Registered {count} hotkey(s)")
+        else:
+            log_warn("No hotkeys configured — hotkeys inactive")
 
     def shutdown(self) -> None:
         """Permanently disable hotkeys. Call once before app quit."""
@@ -250,67 +269,91 @@ class HotkeyManager(QObject):
         parts = combo.split("+")
         return "+".join(replacements.get(p, p).lower() for p in parts)
 
-    # ── Dispatch ─────────────────────────────────────────────────────
+    # ── Dispatch (keyboard hook thread — MUST return quickly) ─────────
 
     def _on_hotkey(self, config_id: str) -> None:
-        """Unified hotkey callback — runs in keyboard thread, dispatches safely."""
-        if self._shutting_down:
-            return
+        """Hotkey callback — runs in keyboard processing thread.
 
-        # Toggle window — always allowed, ignores lock
-        if config_id == "toggle_window":
-            self._toggleRequested.emit()
-            return
-
-        # Check lock (user dragging a slider)
-        if self._lock_callback and self._lock_callback():
-            return
-
-        action = self._action_map.get(config_id)
-        if action is None:
-            return
-
-        action_type, channel_key, slider_key, direction = action
-
-        # In Classic mode, ignore streaming hotkeys (no streaming sliders exist)
-        if not self._streamer_mode and slider_key == "streaming":
-            return
-
-        # In Classic mode, omit streamer_slider from API calls
-        api_slider: str | None = slider_key if self._streamer_mode else None
-
+        CRITICAL: Any exception here silently kills the keyboard library's
+        processing thread, permanently disabling ALL hotkeys. Everything is
+        wrapped in try/except for defense in depth.
+        """
         try:
+            if self._shutting_down:
+                return
+
+            # Toggle window — always allowed, ignores lock
+            if config_id == "toggle_window":
+                self._toggleRequested.emit()
+                return
+
+            # Check lock (user dragging a slider)
+            if self._lock_callback and self._lock_callback():
+                return
+
+            action = self._action_map.get(config_id)
+            if action is None:
+                return
+
+            action_type, channel_key, slider_key, direction = action
+
+            # In Classic mode, ignore streaming hotkeys (no streaming sliders exist)
+            if not self._streamer_mode and slider_key == "streaming":
+                return
+
+            # Defer ALL API work to main thread — no HTTP here
             if action_type == _ACTION_MUTE:
-                self._sonar.toggle_mute(channel_key, api_slider)
-                snap = self._sonar.snapshot()
-                muted = snap.is_muted(channel_key, slider_key)
-                if self._show_toast:
-                    display = channel_name(channel_key)
-                    if self._streamer_mode:
-                        slider_name = (tr("slider.monitoring")
-                                       if slider_key == "monitoring"
-                                       else tr("slider.streaming"))
-                    else:
-                        slider_name = ""
-                    state = "🔇" if muted else "🔊"
-                    text = f"{display} {slider_name}  {state}" if slider_name else f"{display}  {state}"
-                    self._toastRequested.emit(text)
+                self._muteRequested.emit(channel_key, slider_key)
             else:
-                snap = self._sonar.snapshot()
-                current = snap.get(channel_key, slider_key)
-                new_vol = max(0.0, min(1.0, current + direction * _STEP / 100.0))
-                self._sonar.set_volume(channel_key, new_vol,
-                                       streamer_slider=api_slider)
-                if self._show_toast:
-                    display = channel_name(channel_key)
-                    if self._streamer_mode:
-                        slider_name = (tr("slider.monitoring")
-                                       if slider_key == "monitoring"
-                                       else tr("slider.streaming"))
-                    else:
-                        slider_name = ""
-                    vol_pct = round(new_vol * 100)
-                    text = f"{display} {slider_name}  {vol_pct}%" if slider_name else f"{display}  {vol_pct}%"
-                    self._toastRequested.emit(text)
+                self._volumeRequested.emit(channel_key, slider_key, direction)
         except Exception:
-            pass  # API unavailable — silently ignore hotkey
+            log_error(f"Hotkey callback crashed for {config_id}")
+            import traceback
+            traceback.print_exc()
+
+    # ── Action slots (Qt main thread — safe for HTTP) ──────────────────
+
+    def _on_mute_action(self, channel_key: str, slider_key: str) -> None:
+        """Slot: toggle mute (runs in Qt main thread)."""
+        api_slider: str | None = slider_key if self._streamer_mode else None
+        try:
+            self._sonar.toggle_mute(channel_key, api_slider)
+            snap = self._sonar.snapshot()
+            muted = snap.is_muted(channel_key, slider_key)
+            if self._show_toast:
+                display = channel_name(channel_key)
+                if self._streamer_mode:
+                    slider_name = (tr("slider.monitoring")
+                                   if slider_key == "monitoring"
+                                   else tr("slider.streaming"))
+                else:
+                    slider_name = ""
+                state = "🔇" if muted else "🔊"
+                text = f"{display} {slider_name}  {state}" if slider_name else f"{display}  {state}"
+                self._toastRequested.emit(text)
+        except Exception:
+            pass  # API unavailable — silently ignore
+
+    def _on_volume_action(self, channel_key: str, slider_key: str,
+                          direction: int) -> None:
+        """Slot: adjust volume by ±1 step (runs in Qt main thread)."""
+        api_slider: str | None = slider_key if self._streamer_mode else None
+        try:
+            snap = self._sonar.snapshot()
+            current = snap.get(channel_key, slider_key)
+            new_vol = max(0.0, min(1.0, current + direction * _STEP / 100.0))
+            self._sonar.set_volume(channel_key, new_vol,
+                                   streamer_slider=api_slider)
+            if self._show_toast:
+                display = channel_name(channel_key)
+                if self._streamer_mode:
+                    slider_name = (tr("slider.monitoring")
+                                   if slider_key == "monitoring"
+                                   else tr("slider.streaming"))
+                else:
+                    slider_name = ""
+                vol_pct = round(new_vol * 100)
+                text = f"{display} {slider_name}  {vol_pct}%" if slider_name else f"{display}  {vol_pct}%"
+                self._toastRequested.emit(text)
+        except Exception:
+            pass  # API unavailable — silently ignore

@@ -10,6 +10,7 @@ from typing import Any
 
 import yaml
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QCheckBox,
     QFormLayout,
@@ -17,9 +18,11 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSplitter,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -671,6 +674,100 @@ class AboutTab(QWidget):
 
 
 # ---------------------------------------------------------------------------
+# Log tab
+# ---------------------------------------------------------------------------
+
+_MAX_LOG_LINES = 2000
+
+
+class LogTab(QWidget):
+    """Log viewer tab — displays timestamped messages from all modules."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+
+        # Toolbar
+        toolbar = QHBoxLayout()
+        toolbar.setContentsMargins(0, 0, 0, 4)
+
+        self._clear_btn = QPushButton(tr("log.clear"))
+        self._clear_btn.setFixedWidth(60)
+        self._clear_btn.clicked.connect(self._clear)
+        toolbar.addWidget(self._clear_btn)
+        toolbar.addStretch()
+
+        self._count_label = QLabel("0")
+        self._count_label.setStyleSheet(
+            f"color: {DEFAULT_THEME.text_secondary}; font-size: 8pt;"
+        )
+        toolbar.addWidget(self._count_label)
+        layout.addLayout(toolbar)
+
+        # Log area
+        self._view = QPlainTextEdit()
+        self._view.setReadOnly(True)
+        self._view.setMaximumBlockCount(_MAX_LOG_LINES)
+        self._view.setStyleSheet(
+            f"QPlainTextEdit {{"
+            f"background-color: {DEFAULT_THEME.bg_primary};"
+            f"color: {DEFAULT_THEME.text_primary};"
+            f"border: 1px solid {DEFAULT_THEME.border};"
+            f"border-radius: 4px;"
+            f"font-family: 'Cascadia Code', 'Consolas', 'Courier New', monospace;"
+            f"font-size: 9pt;"
+            f"padding: 4px;"
+            f"}}"
+            f"QScrollBar:vertical {{"
+            f"background: {DEFAULT_THEME.bg_primary}; width: 8px;"
+            f"}}"
+            f"QScrollBar::handle:vertical {{"
+            f"background: {DEFAULT_THEME.border_hover}; border-radius: 4px; min-height: 20px;"
+            f"}}"
+            f"QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}"
+        )
+        layout.addWidget(self._view)
+
+        self._count = 0
+        on_lang_changed(self._refresh_text)
+
+        # Connect to log emitter
+        from log_handler import _LogEmitter
+        _LogEmitter.get().message.connect(self._on_log)
+
+    def _on_log(self, ts: str, category: str, message: str) -> None:
+        """Slot: append a log line."""
+        color_map = {
+            "INFO": DEFAULT_THEME.text_primary,
+            "WARN": "#d4a72c",
+            "ERROR": "#e0555a",
+        }
+        color = color_map.get(category, DEFAULT_THEME.text_secondary)
+        cat = category.ljust(5)
+        line = (
+            f'<span style="color:{DEFAULT_THEME.text_muted}">{ts}</span>  '
+            f'<span style="color:{color};font-weight:bold">{cat}</span> '
+            f'<span style="color:{DEFAULT_THEME.text_primary}">{message}</span>'
+        )
+        self._view.appendHtml(line)
+        # Auto-scroll
+        self._view.verticalScrollBar().setValue(
+            self._view.verticalScrollBar().maximum()
+        )
+        self._count += 1
+        self._count_label.setText(str(self._count))
+
+    def _clear(self) -> None:
+        self._view.clear()
+        self._count = 0
+        self._count_label.setText("0")
+
+    def _refresh_text(self) -> None:
+        self._clear_btn.setText(tr("log.clear"))
+
+
+# ---------------------------------------------------------------------------
 # Settings window
 # ---------------------------------------------------------------------------
 
@@ -701,10 +798,12 @@ class SettingsWindow(QWidget):
         self._hotkey_tab = HotkeyTab(config_path)
         self._general_tab = GeneralTab()
         self._about_tab = AboutTab()
+        self._log_tab = LogTab()
 
         self._tabs.addTab(self._hotkey_tab, tr("settings.tab_hotkeys"))
         self._tabs.addTab(self._general_tab, tr("settings.tab_general"))
         self._tabs.addTab(self._about_tab, tr("settings.tab_about"))
+        self._tabs.addTab(self._log_tab, tr("settings.tab_log"))
 
         layout.addWidget(self._tabs)
 
@@ -732,6 +831,7 @@ class SettingsWindow(QWidget):
         self._tabs.setTabText(0, tr("settings.tab_hotkeys"))
         self._tabs.setTabText(1, tr("settings.tab_general"))
         self._tabs.setTabText(2, tr("settings.tab_about"))
+        self._tabs.setTabText(3, tr("settings.tab_log"))
         self._load_btn.setText(tr("settings.reload"))
         self._apply_btn.setText(tr("settings.save_all"))
         self._close_btn.setText(tr("settings.close"))

@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QApplication
 
 from hotkey import HotkeyManager
 from i18n import tr
+from log_handler import log_info, log_warn
 from mixer_ui import MixerWidget
 from settings_ui import SettingsWindow
 from sonar_ctrl import SonarCtrl
@@ -53,6 +54,14 @@ class SonarMixApp:
         self._sonar = SonarCtrl()
         self._hotkeys = HotkeyManager(self._sonar)
 
+        # Admin check — global keyboard hooks require elevation on Windows
+        import ctypes
+        is_admin = ctypes.windll.shell32.IsUserAnAdmin()
+        if is_admin:
+            log_info("Running as Administrator — hotkey hook stable")
+        else:
+            log_warn("Not running as Administrator — hotkeys may be blocked by Windows security policy. Restart as Admin.")
+
         # ── Main window ──────────────────────────────────────────────
         self._mixer = MixerWidget(self._sonar)
         self._mixer.setWindowTitle(tr("app.title"))
@@ -60,6 +69,8 @@ class SonarMixApp:
         initial_mode = self._sonar.refresh_streamer_mode()
         self._mixer.set_streamer_mode(initial_mode)
         self._hotkeys.set_streamer_mode(initial_mode)
+        mode_str = "Streamer" if initial_mode else "Classic"
+        log_info(f"Sonar mode: {mode_str}")
         self._mixer.streamerModeChanged.connect(self._on_streamer_mode_changed)
         # Minimize → hide to tray, Close → quit
         self._base_flags = (

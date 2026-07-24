@@ -323,7 +323,7 @@ class MixerWidget(QWidget):
         self._version_label = QLabel(
             f'<a href="https://github.com/Brett-Now/SonarMix" '
             f'style="color: {self._theme.text_muted}; text-decoration: none; '
-            f'font-size: 9pt;">GitHub  v1.0.0</a>'
+            f'font-size: 9pt;">GitHub  v1.1.0</a>'
         )
         self._version_label.setOpenExternalLinks(True)
         mute_row.addWidget(self._version_label)

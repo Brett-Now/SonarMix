@@ -32,7 +32,7 @@ from i18n import on_lang_changed, tr
 from theme import DEFAULT_THEME, ThemeColors
 
 # Project metadata
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 GITHUB_URL = "https://github.com/Brett-Now/SonarMix"
 
 

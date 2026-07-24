@@ -1,0 +1,23 @@
+[project]
+name = "sonarmix"
+version = "1.0.0"
+description = "SteelSeries GG Sonar volume mixer — system tray app with hotkeys"
+requires-python = ">=3.10"
+dependencies = [
+    "steelseries-sonar-py",
+    "PySide6>=6.5",
+    "keyboard",
+    "PyYAML",
+]
+
+[tool.setuptools.packages.find]
+exclude = ["主题配色参考*", "screenshots*"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.21.0",
+]

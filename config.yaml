@@ -1,0 +1,6 @@
+hotkeys: {}
+settings:
+  always_on_top: true
+  language: zh
+  show_toast: true
+  start_minimized: false

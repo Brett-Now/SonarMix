@@ -129,6 +129,12 @@ SonarMix/
 
 ---
 
+## Acknowledgments
+
+This project is built on [**steelseries-sonar-py**](https://github.com/Mark7888/steelseries-sonar-py) by [Mark7888](https://github.com/Mark7888) — the Python wrapper for SteelSeries GG Sonar's local HTTP API. All volume read/write and mode switching goes through this library.
+
+---
+
 ## Known Limitations
 
 - **Hotkeys may need admin** — `keyboard` library hooks may require elevation on some Windows setups

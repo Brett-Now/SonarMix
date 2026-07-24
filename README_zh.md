@@ -129,6 +129,12 @@ SonarMix/
 
 ---
 
+## 致谢
+
+本项目基于 [**steelseries-sonar-py**](https://github.com/Mark7888/steelseries-sonar-py) 构建，由 [Mark7888](https://github.com/Mark7888) 开发——该库封装了 SteelSeries GG Sonar 的本地 HTTP API，所有音量读写与模式切换均通过此库完成。
+
+---
+
 ## 已知限制
 
 - **热键可能需提权** — `keyboard` 钩子在部分 Windows 配置下可能需要管理员身份运行

@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -530,6 +531,26 @@ class GeneralTab(QWidget):
 # About tab
 # ---------------------------------------------------------------------------
 
+def _make_centered(text: str, font_size: str, weight: str, color: str) -> QLabel:
+    """Label spanning full width with centered text."""
+    lbl = QLabel(text)
+    lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    lbl.setStyleSheet(
+        f"font-size: {font_size}; font-weight: {weight}; color: {color};"
+    )
+    return lbl
+
+
+def _make_wrap(text: str, font_size: str, color: str) -> QLabel:
+    """Label spanning full width with word-wrapped centered text."""
+    lbl = QLabel(text)
+    lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    lbl.setWordWrap(True)
+    lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+    lbl.setStyleSheet(f"font-size: {font_size}; color: {color}; line-height: 1.6;")
+    return lbl
+
+
 class AboutTab(QWidget):
     """About tab — app info, features, credits."""
 
@@ -603,25 +624,25 @@ class AboutTab(QWidget):
         layout.addSpacing(4)
 
         # ── Features ──────────────────────────────────────────────
-        self._feat_title = QLabel(tr("about.features_title"))
-        self._feat_title.setStyleSheet("font-size: 9pt; font-weight: 700; color: #e6edf3;")
-        self._feat_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._feat_title = _make_centered(tr("about.features_title"), "9pt", "700", "#e6edf3")
         layout.addWidget(self._feat_title)
 
-        self._feat_body = QLabel(tr("about.features"))
-        self._feat_body.setStyleSheet(
-            "font-size: 8pt; color: #8b949e; line-height: 1.6;"
-        )
-        self._feat_body.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._feat_body.setWordWrap(True)
+        self._feat_body = _make_wrap(tr("about.features"), "8pt", "#8b949e")
         layout.addWidget(self._feat_body)
 
         layout.addSpacing(8)
 
-        # ── Tech stack ────────────────────────────────────────────
-        self._tech = QLabel(tr("about.tech_stack"))
-        self._tech.setStyleSheet("font-size: 7pt; color: #6e7681;")
-        self._tech.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # ── Acknowledgment ─────────────────────────────────────────
+        self._ack_title = _make_centered(tr("about.ack_title"), "9pt", "700", "#e6edf3")
+        layout.addWidget(self._ack_title)
+
+        self._ack_body = _make_wrap(tr("about.ack_body"), "8pt", "#8b949e")
+        layout.addWidget(self._ack_body)
+
+        layout.addSpacing(8)
+
+        # ── Tech stack (last) ──────────────────────────────────────
+        self._tech = _make_centered(tr("about.tech_stack"), "7pt", "400", "#6e7681")
         layout.addWidget(self._tech)
 
         layout.addStretch()
@@ -645,6 +666,8 @@ class AboutTab(QWidget):
         self._feat_title.setText(tr("about.features_title"))
         self._feat_body.setText(tr("about.features"))
         self._tech.setText(tr("about.tech_stack"))
+        self._ack_title.setText(tr("about.ack_title"))
+        self._ack_body.setText(tr("about.ack_body"))
 
 
 # ---------------------------------------------------------------------------

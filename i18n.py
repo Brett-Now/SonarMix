@@ -70,6 +70,8 @@ _ZH: dict[str, str] = {
     "about.features_title": "功能特性",
     "about.features": "6 频道紧凑面板 · Streamer / 普通模式切换\n系统托盘 · 全局热键（最多 37 组）\nToast 弹窗提示 · 中英双语 · 拖拽保护",
     "about.tech_stack": "PySide6 · steelseries-sonar-py · keyboard · PyYAML · PyInstaller",
+    "about.ack_title": "致谢",
+    "about.ack_body": "本项目基于 Mark7888 开发的 steelseries-sonar-py 构建\n该库封装了 SteelSeries GG Sonar 本地 HTTP API\n所有音量读写与模式切换均通过此库完成",
 
     # Hotkey action labels
     "hk.classic_mode_note": "普通模式下，快捷键使用「个人」列的设置",
@@ -173,6 +175,8 @@ _EN: dict[str, str] = {
     "about.features_title": "Features",
     "about.features": "6-channel compact panel · Streamer / Classic toggle\nSystem tray · global hotkeys (up to 37 bindings)\nToast notifications · bilingual UI · drag-safe",
     "about.tech_stack": "PySide6 · steelseries-sonar-py · keyboard · PyYAML · PyInstaller",
+    "about.ack_title": "Acknowledgments",
+    "about.ack_body": "Built on steelseries-sonar-py by Mark7888\nPython wrapper for SteelSeries GG Sonar local HTTP API\nAll volume, mute, and mode switching is powered by this library",
 
     # Hotkey action labels
     "hk.classic_mode_note": "In Classic mode, hotkeys use the 'Mon' column settings",

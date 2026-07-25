@@ -14,6 +14,7 @@ from PySide6.QtGui import QAction, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon, QWidget
 
 from i18n import on_lang_changed, tr
+from log_handler import log_debug, log_info
 from theme import DEFAULT_THEME, ThemeColors
 
 
@@ -98,6 +99,7 @@ class TrayController(QObject):
 
         self._tray.setContextMenu(self._menu)
         self._tray.show()
+        log_info("System tray created")
 
         # Refresh menu text when language changes
         on_lang_changed(self._refresh_text)
@@ -117,6 +119,7 @@ class TrayController(QObject):
             self._show_window()
 
     def _show_window(self) -> None:
+        log_debug("Tray: window shown")
         self._main_window.show()
         self._main_window.raise_()
         self._main_window.activateWindow()
@@ -125,6 +128,7 @@ class TrayController(QObject):
         self.showRequested.emit()
 
     def _hide_window(self) -> None:
+        log_debug("Tray: window hidden")
         self._main_window.hide()
         self._visible = False
         self._show_action.setText(tr("tray.show"))

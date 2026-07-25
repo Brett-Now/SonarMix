@@ -23,6 +23,8 @@ from typing import Final
 
 from steelseries_sonar_py import Sonar
 
+from log_handler import log_debug, log_error, log_info, log_warn
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -169,6 +171,13 @@ class SonarCtrl:
     def __init__(self) -> None:
         self._sonar = Sonar()
         self._streamer_mode: bool | None = None
+        # Detect initial mode
+        try:
+            self._streamer_mode = self._sonar.is_streamer_mode()
+            log_info(f"SonarCtrl initialized — streamer mode: {self._streamer_mode}")
+        except Exception as e:
+            log_error(f"SonarCtrl init failed — cannot reach Sonar API: {e}")
+            self._streamer_mode = False
 
     # ── Streamer mode ────────────────────────────────────────────────
 
@@ -181,20 +190,35 @@ class SonarCtrl:
 
     def refresh_streamer_mode(self) -> bool:
         """Force re-read streamer mode from GG."""
-        self._streamer_mode = self._sonar.is_streamer_mode()
+        old = self._streamer_mode
+        try:
+            self._streamer_mode = self._sonar.is_streamer_mode()
+        except Exception as e:
+            log_error(f"refresh_streamer_mode failed: {e}")
+            return old or False
+        if old != self._streamer_mode:
+            log_info(f"Streamer mode re-read: {old} → {self._streamer_mode}")
         return self._streamer_mode
 
     def set_streamer_mode(self, enabled: bool) -> None:
         """Toggle Streamer Mode on/off — also fixes the library's
         volume_path which is only set once in Sonar.__init__()."""
-        self._sonar.set_streamer_mode(enabled)
+        old = self._streamer_mode
+        log_info(f"set_streamer_mode: {old} → {enabled}")
+        try:
+            self._sonar.set_streamer_mode(enabled)
+        except Exception as e:
+            log_error(f"set_streamer_mode API call failed: {e}")
+            return
         self._streamer_mode = enabled
         # The library switches self.streamer_mode but NOT volume_path.
         # Without this, GET/PUT keeps hitting /volumeSettings/streamer/ → 404.
+        old_path = getattr(self._sonar, "volume_path", "?")
         self._sonar.volume_path = (
             "/volumeSettings/streamer" if enabled
             else "/volumeSettings/classic"
         )
+        log_debug(f"volume_path fixed: {old_path} → {self._sonar.volume_path}")
 
     def _streamer_slider_kwarg(self, streamer_slider: str | None) -> dict[str, str]:
         """Build kwargs for API calls — omit streamer_slider in Classic mode."""
@@ -206,7 +230,11 @@ class SonarCtrl:
 
     def snapshot(self) -> Snapshot:
         """Fetch full volume data from Sonar API."""
-        data = self._sonar.get_volume_data()
+        try:
+            data = self._sonar.get_volume_data()
+        except Exception as e:
+            log_warn(f"snapshot fetch failed: {e}")
+            raise
         # Auto-detect mode from data structure (not is_streamer_mode(),
         # which can return the new mode while volume data is still in
         # the old format during the GG mode-switch transition).
@@ -220,12 +248,38 @@ class SonarCtrl:
         In Classic mode, *streamer_slider* is ignored.
         """
         clamped = max(0.0, min(1.0, volume))
+
+        # Read old volume for logging
+        old_pct: int | None = None
+        try:
+            snap = self.snapshot()
+            sl = streamer_slider if (streamer_slider and self._streamer_mode) else "monitoring"
+            old_pct = round(snap.get(channel, sl) * 100)
+        except Exception:
+            pass  # can't read old value — log without it
+
         kwargs = self._streamer_slider_kwarg(streamer_slider)
-        self._sonar.set_volume(channel, clamped, **kwargs)
+        new_pct = round(clamped * 100)
+        sl_label = streamer_slider if (streamer_slider and self._streamer_mode) else "—"
+
+        try:
+            self._sonar.set_volume(channel, clamped, **kwargs)
+        except Exception as e:
+            log_error(f"SET volume failed: {channel}/{sl_label} → {new_pct}% — {e}")
+            return
+
+        if old_pct is not None and old_pct != new_pct:
+            log_info(f"SET volume: {channel}/{sl_label}  {old_pct}% → {new_pct}%")
+        elif old_pct is None:
+            log_info(f"SET volume: {channel}/{sl_label}  {new_pct}%")
+        # else: unchanged — still log at DEBUG level (may indicate GG no-op)
+        elif old_pct == new_pct:
+            log_debug(f"SET volume: {channel}/{sl_label}  {new_pct}% (unchanged)")
 
     def set_volume_int(self, channel: str, value: int,
                        streamer_slider: str | None = None) -> None:
         """Set volume from a 0–100 integer slider value."""
+        log_debug(f"set_volume_int: {channel}/{streamer_slider} → {value}")
         self.set_volume(channel, value / 100.0, streamer_slider)
 
     # ── Mute ─────────────────────────────────────────────────────────
@@ -236,12 +290,29 @@ class SonarCtrl:
         In Classic mode, *streamer_slider* is ignored.
         """
         kwargs = self._streamer_slider_kwarg(streamer_slider)
-        self._sonar.mute_channel(channel, muted, **kwargs)
+        sl_label = streamer_slider if (streamer_slider and self._streamer_mode) else "—"
+        state = "MUTED" if muted else "UNMUTED"
+
+        try:
+            self._sonar.mute_channel(channel, muted, **kwargs)
+        except Exception as e:
+            log_error(f"MUTE failed: {channel}/{sl_label} → {state} — {e}")
+            return
+
+        log_info(f"MUTE: {channel}/{sl_label}  {state}")
 
     def toggle_mute(self, channel: str, streamer_slider: str | None = None) -> None:
         """Toggle mute state for a channel + streamer slider."""
-        snap = self.snapshot()
-        current = snap.is_muted(channel, streamer_slider or "monitoring")
+        try:
+            snap = self.snapshot()
+        except Exception:
+            log_warn(f"toggle_mute: cannot read state for {channel} — aborting")
+            return
+        sl = streamer_slider if (streamer_slider and self._streamer_mode) else "monitoring"
+        current = snap.is_muted(channel, sl)
+        sl_label = streamer_slider if (streamer_slider and self._streamer_mode) else "—"
+        new_state = "MUTED" if not current else "UNMUTED"
+        log_info(f"TOGGLE mute: {channel}/{sl_label}  {new_state} (was {'MUTED' if current else 'UNMUTED'})")
         self.mute(channel, not current, streamer_slider)
 
 

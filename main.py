@@ -6,6 +6,7 @@ Entry point: creates the mixer window, system tray, hotkeys, and settings.
 from __future__ import annotations
 
 import sys
+import traceback
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
@@ -13,9 +14,9 @@ from PySide6.QtWidgets import QApplication
 
 from hotkey import HotkeyManager
 from i18n import tr
-from log_handler import log_info, log_warn
+from log_handler import init_log_file, log_debug, log_error, log_info, log_warn, shutdown_log_file
 from mixer_ui import MixerWidget
-from settings_ui import SettingsWindow
+from settings_ui import APP_VERSION, SettingsWindow
 from sonar_ctrl import SonarCtrl
 from theme import DEFAULT_THEME, apply_theme
 from tray import TrayController, generate_icon
@@ -35,6 +36,22 @@ CONFIG_PATH = CONFIG_DIR / "config.yaml"
 
 
 # ---------------------------------------------------------------------------
+# Global exception hook — capture unhandled crashes into the log file
+# ---------------------------------------------------------------------------
+
+_original_excepthook = sys.excepthook
+
+def _global_excepthook(exc_type, exc_value, exc_tb):
+    """Log unhandled Python exceptions before letting the default handler run."""
+    tb_lines = traceback.format_exception(exc_type, exc_value, exc_tb)
+    log_error("Unhandled exception — " + "".join(tb_lines).rstrip())
+    _original_excepthook(exc_type, exc_value, exc_tb)
+
+
+sys.excepthook = _global_excepthook
+
+
+# ---------------------------------------------------------------------------
 # Main Application
 # ---------------------------------------------------------------------------
 
@@ -42,6 +59,15 @@ class SonarMixApp:
     """Root application — wires together all modules."""
 
     def __init__(self) -> None:
+        # ── Log file (early, before anything else writes to the emitter) ──
+        log_path = init_log_file(_BASE_DIR, APP_VERSION)
+        mode_str = "frozen" if getattr(sys, "frozen", False) else "dev"
+        log_info(f"SonarMix v{APP_VERSION} starting ({mode_str} mode)")
+        log_info(f"Base dir: {_BASE_DIR}")
+        log_info(f"Config path: {CONFIG_PATH}")
+        if log_path:
+            log_debug(f"Log file: {log_path}")
+
         self._app = QApplication(sys.argv)
         self._app.setQuitOnLastWindowClosed(False)
         apply_theme(self._app, DEFAULT_THEME)
@@ -107,19 +133,27 @@ class SonarMixApp:
         self._apply_window_flags()
 
         # Persist language choice to config.yaml
-        from i18n import on_lang_changed, get_lang
-        on_lang_changed(self._save_language)
+        from i18n import get_lang, on_lang_changed
+        self._current_lang = get_lang()
+        log_debug(f"UI language: {self._current_lang}")
+        on_lang_changed(self._on_language_changed)
 
         # ── Periodic refresh (catch external changes in GG) ──────────
         self._refresh_timer = QTimer()
         self._refresh_timer.timeout.connect(self._periodic_refresh)
         self._refresh_timer.start(2000)  # every 2 seconds
+        log_debug("Periodic refresh timer started (2000 ms)")
 
         # ── Start visible or minimized ────────────────────────────────
         if self._start_minimized:
             self._mixer.hide()
+            log_info("Window hidden to tray (start minimized)")
         else:
             self._mixer.show()
+            log_info("Window shown")
+
+        # Install Windows session-lock guard (clears stuck keys on unlock)
+        self._hotkeys.install_session_guard(int(self._mixer.winId()))
         self._tray.sync_visibility()
 
     # ── Lifecycle ────────────────────────────────────────────────────
@@ -130,9 +164,11 @@ class SonarMixApp:
 
     def _quit(self) -> None:
         """Clean shutdown — unhook keyboard before Qt event loop dies."""
+        log_info("Shutting down — stopping refresh, unhooking hotkeys...")
         self._refresh_timer.stop()
         self._hotkeys.shutdown()
         self._app.quit()
+        shutdown_log_file()
 
     # ── Config ───────────────────────────────────────────────────────
 
@@ -160,15 +196,28 @@ class SonarMixApp:
                           default_flow_style=False),
                 encoding="utf-8",
             )
+            log_info("Config not found — created default config.yaml")
             data = self._DEFAULT_CONFIG
         else:
             try:
                 data = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
-            except Exception:
+            except Exception as e:
+                log_error(f"Config YAML parse error: {e} — using defaults")
                 data = self._DEFAULT_CONFIG
 
-        self._hotkeys.register_all(data.get("hotkeys", {}))
+        hk = data.get("hotkeys", {})
+        hk_count = len([v for v in hk.values() if v])
         s = data.get("settings", {})
+        lang = s.get("language", "zh")
+        log_info(
+            f"Config loaded: {hk_count} hotkey(s), "
+            f"language={lang}, "
+            f"always_on_top={s.get('always_on_top', True)}, "
+            f"show_toast={s.get('show_toast', True)}, "
+            f"start_minimized={s.get('start_minimized', False)}"
+        )
+
+        self._hotkeys.register_all(hk)
         self._hotkeys.set_show_toast(s.get("show_toast", True))
         self._start_minimized = s.get("start_minimized", False)
 
@@ -192,11 +241,13 @@ class SonarMixApp:
 
     def _on_config_saved(self) -> None:
         """Hotkeys + settings applied → reload and refresh."""
+        log_info("Config saved — reloading...")
         self._load_config()
         self._apply_window_flags()
 
     def _on_config_loaded(self) -> None:
         """Settings loaded from file → apply flags."""
+        log_debug("Config loaded into settings window")
         self._apply_window_flags()
 
     def _apply_window_flags(self) -> None:
@@ -204,19 +255,32 @@ class SonarMixApp:
         flags = self._base_flags
         if self._settings.always_on_top:
             flags |= Qt.WindowType.WindowStaysOnTopHint
+            log_debug("Window flag: always-on-top ON")
         else:
             flags &= ~Qt.WindowType.WindowStaysOnTopHint
+            log_debug("Window flag: always-on-top OFF")
         self._mixer.setWindowFlags(flags)
         self._mixer.show()  # setWindowFlags hides, re-show
 
     def _on_streamer_mode_changed(self, enabled: bool) -> None:
         """Sync hotkey manager to current mode — streaming hotkeys are ignored in Classic."""
+        mode_str = "Streamer" if enabled else "Classic"
+        log_info(f"Streamer mode changed → {mode_str}")
         self._hotkeys.set_streamer_mode(enabled)
+
+    def _on_language_changed(self) -> None:
+        """Log language changes from user toggle."""
+        from i18n import get_lang
+        new_lang = get_lang()
+        if new_lang != self._current_lang:
+            log_info(f"Language changed: {self._current_lang} → {new_lang}")
+            self._current_lang = new_lang
 
     # ── Settings ─────────────────────────────────────────────────────
 
     def _show_settings(self) -> None:
         """Open the settings window."""
+        log_debug("Settings window opened")
         self._settings.show()
         self._settings.raise_()
         self._settings.activateWindow()

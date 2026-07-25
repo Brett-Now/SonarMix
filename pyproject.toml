@@ -1,6 +1,6 @@
 [project]
 name = "sonarmix"
-version = "1.1.0"
+version = "1.1.1"
 description = "SteelSeries GG Sonar volume mixer — system tray app with hotkeys"
 requires-python = ">=3.10"
 dependencies = [

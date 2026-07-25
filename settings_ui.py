@@ -29,10 +29,11 @@ from PySide6.QtWidgets import (
 )
 
 from i18n import on_lang_changed, tr
+from log_handler import log_debug, log_error, log_info
 from theme import DEFAULT_THEME, ThemeColors
 
 # Project metadata
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 GITHUB_URL = "https://github.com/Brett-Now/SonarMix"
 
 
@@ -70,6 +71,7 @@ class _CaptureEdit(QLineEdit):
         _CaptureEdit._active = self
         self._prev_text = self.text()
         self._capturing = True
+        log_debug(f"Key capture started: {self._config_id} (was: \"{self._prev_text or 'empty'}\")")
         self.setText("…")
         self.setStyleSheet(
             f"QLineEdit {{ background: {DEFAULT_THEME.accent}; "
@@ -92,6 +94,7 @@ class _CaptureEdit(QLineEdit):
 
         # Delete → clear hotkey
         if key == Qt.Key.Key_Delete.value:
+            log_debug(f"Key capture cleared: {self._config_id}")
             self.captured.emit(self._config_id, "")
             self._commit("")
             return
@@ -116,6 +119,7 @@ class _CaptureEdit(QLineEdit):
         self.captured.emit(self._config_id, combo)
 
     def _commit(self, text: str) -> None:
+        log_debug(f"Key capture committed: {self._config_id} = \"{text}\"")
         self.setText(text)
         self._capturing = False
         if _CaptureEdit._active is self:
@@ -123,6 +127,7 @@ class _CaptureEdit(QLineEdit):
         self._reset_style()
 
     def _cancel(self) -> None:
+        log_debug(f"Key capture cancelled: {self._config_id} → restored \"{self._prev_text or 'empty'}\"")
         self.setText(self._prev_text)
         self._capturing = False
         if _CaptureEdit._active is self:
@@ -458,6 +463,7 @@ class HotkeyTab(QWidget):
             yaml.dump(existing, default_flow_style=False, allow_unicode=True),
             encoding="utf-8",
         )
+        log_info(f"Config saved: {len(hotkeys)} hotkey binding(s) + settings")
 
     def get_hotkeys(self) -> dict[str, str]:
         hotkeys = self._grid.get_hotkeys()
@@ -677,24 +683,38 @@ class AboutTab(QWidget):
 # Log tab
 # ---------------------------------------------------------------------------
 
-_MAX_LOG_LINES = 2000
+_MAX_LOG_LINES = 5000
 
 
 class LogTab(QWidget):
-    """Log viewer tab — displays timestamped messages from all modules."""
+    """Log viewer tab — displays timestamped messages from all modules.
+
+    Stores every line (ts, category, message) and supports filtering by
+    level via a "Verbose / 详细日志" checkbox.  Default: hide DEBUG.
+    """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._lines: list[tuple[str, str, str]] = []  # (ts, category, msg)
+        self._verbose = False
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
 
-        # Toolbar
+        # ── Toolbar ────────────────────────────────────────────────────
         toolbar = QHBoxLayout()
         toolbar.setContentsMargins(0, 0, 0, 4)
 
+        self._verbose_cb = QCheckBox(tr("log.verbose"))
+        self._verbose_cb.setChecked(False)
+        self._verbose_cb.toggled.connect(self._on_verbose_toggled)
+        self._verbose_cb.setStyleSheet(
+            f"QCheckBox {{ color: {DEFAULT_THEME.text_secondary}; font-size: 8pt; }}"
+        )
+        toolbar.addWidget(self._verbose_cb)
+
         self._clear_btn = QPushButton(tr("log.clear"))
         self._clear_btn.setFixedWidth(60)
-        self._clear_btn.clicked.connect(self._clear)
         toolbar.addWidget(self._clear_btn)
         toolbar.addStretch()
 
@@ -705,7 +725,7 @@ class LogTab(QWidget):
         toolbar.addWidget(self._count_label)
         layout.addLayout(toolbar)
 
-        # Log area
+        # ── Log area ───────────────────────────────────────────────────
         self._view = QPlainTextEdit()
         self._view.setReadOnly(True)
         self._view.setMaximumBlockCount(_MAX_LOG_LINES)
@@ -729,42 +749,87 @@ class LogTab(QWidget):
         )
         layout.addWidget(self._view)
 
-        self._count = 0
         on_lang_changed(self._refresh_text)
 
         # Connect to log emitter
         from log_handler import _LogEmitter
         _LogEmitter.get().message.connect(self._on_log)
 
-    def _on_log(self, ts: str, category: str, message: str) -> None:
-        """Slot: append a log line."""
-        color_map = {
-            "INFO": DEFAULT_THEME.text_primary,
-            "WARN": "#d4a72c",
+    # ── Level colors ───────────────────────────────────────────────────
+
+    @staticmethod
+    def _level_color(category: str) -> str:
+        return {
+            "DEBUG": "#5a5a5a",
+            "INFO":  DEFAULT_THEME.text_primary,
+            "WARN":  "#d4a72c",
             "ERROR": "#e0555a",
-        }
-        color = color_map.get(category, DEFAULT_THEME.text_secondary)
+        }.get(category, DEFAULT_THEME.text_secondary)
+
+    # ── Event handlers ─────────────────────────────────────────────────
+
+    def _on_log(self, ts: str, category: str, message: str) -> None:
+        """Slot: store the line; append to view if not filtered."""
+        self._lines.append((ts, category, message))
+
+        # Apply cap so stored lines don't grow unbounded
+        if len(self._lines) > _MAX_LOG_LINES:
+            self._lines = self._lines[-_MAX_LOG_LINES:]
+
+        if not self._verbose and category == "DEBUG":
+            self._update_count_label()
+            return
+
+        self._append_html(ts, category, message)
+        self._update_count_label()
+
+    def _on_verbose_toggled(self, checked: bool) -> None:
+        """Rebuild the entire view when verbose mode changes."""
+        self._verbose = checked
+        self._view.clear()
+
+        for ts, cat, msg in self._lines:
+            if not checked and cat == "DEBUG":
+                continue
+            self._append_html(ts, cat, msg)
+
+        # Scroll to bottom
+        sb = self._view.verticalScrollBar()
+        sb.setValue(sb.maximum())
+        self._update_count_label()
+
+    def _append_html(self, ts: str, category: str, message: str) -> None:
+        """Append a single colorised HTML line to the view."""
+        color = self._level_color(category)
         cat = category.ljust(5)
         line = (
             f'<span style="color:{DEFAULT_THEME.text_muted}">{ts}</span>  '
             f'<span style="color:{color};font-weight:bold">{cat}</span> '
-            f'<span style="color:{DEFAULT_THEME.text_primary}">{message}</span>'
+            f'<span style="color:{color}">{message}</span>'
         )
         self._view.appendHtml(line)
-        # Auto-scroll
-        self._view.verticalScrollBar().setValue(
-            self._view.verticalScrollBar().maximum()
-        )
-        self._count += 1
-        self._count_label.setText(str(self._count))
+
+    def _update_count_label(self) -> None:
+        """Show displayed / total count, with filter hint if applicable."""
+        total = len(self._lines)
+        if self._verbose:
+            self._count_label.setText(str(total))
+        else:
+            shown = sum(1 for _, cat, _ in self._lines if cat != "DEBUG")
+            if shown == total:
+                self._count_label.setText(str(total))
+            else:
+                self._count_label.setText(f"{shown} / {total} {tr('log.filtered_count')}")
 
     def _clear(self) -> None:
+        self._lines.clear()
         self._view.clear()
-        self._count = 0
         self._count_label.setText("0")
 
     def _refresh_text(self) -> None:
+        self._verbose_cb.setText(tr("log.verbose"))
         self._clear_btn.setText(tr("log.clear"))
+        self._update_count_label()
 
 
 # ---------------------------------------------------------------------------
@@ -841,12 +906,21 @@ class SettingsWindow(QWidget):
     def _load_all(self) -> None:
         """Load all settings from config.yaml."""
         if not self._config_path.exists():
+            log_debug("Config load skipped — file not found")
             return
-        data = yaml.safe_load(self._config_path.read_text(encoding="utf-8"))
+        try:
+            data = yaml.safe_load(self._config_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            log_error(f"Config YAML parse error on load: {e}")
+            return
         if not data:
             return
-        self._hotkey_tab.load(data.get("hotkeys", {}))
-        self._general_tab.set_values(data.get("settings", {}))
+        hk = data.get("hotkeys", {})
+        s = data.get("settings", {})
+        hk_count = len([v for v in hk.values() if v])
+        log_info(f"Settings loaded: {hk_count} hotkey(s), language={s.get('language', '?')}")
+        self._hotkey_tab.load(hk)
+        self._general_tab.set_values(s)
         self.configLoaded.emit()
 
     def _apply_all(self) -> None:
@@ -860,6 +934,7 @@ class SettingsWindow(QWidget):
             yaml.dump(data, default_flow_style=False, allow_unicode=True),
             encoding="utf-8",
         )
+        log_info(f"Settings applied: {len(hotkeys)} hotkey(s), always_on_top={settings.get('always_on_top')}, show_toast={settings.get('show_toast')}")
         self.configSaved.emit()
 
     # ── Public accessors ─────────────────────────────────────────────

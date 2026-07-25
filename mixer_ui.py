@@ -6,6 +6,8 @@ shown/hidden via system tray.
 
 from __future__ import annotations
 
+from typing import Any
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QGridLayout,
@@ -21,7 +23,8 @@ from PySide6.QtWidgets import (
 )
 
 from i18n import channel_name, tr
-from sonar_ctrl import CHANNEL_KEYS, SonarCtrl
+from log_handler import log_debug, log_info
+from sonar_ctrl import CHANNEL_KEYS, SonarCtrl, Snapshot
 from theme import DEFAULT_THEME, ThemeColors
 
 
@@ -63,6 +66,13 @@ class ChannelGroup(QGroupBox):
         for sl in (self._mon_slider, self._stm_slider):
             sl.sliderPressed.connect(self._on_pressed)
             sl.sliderReleased.connect(self._on_released)
+
+        self._mon_slider.sliderPressed.connect(
+            lambda: log_debug(f"Slider pressed: {self._channel_key} monitoring")
+        )
+        self._stm_slider.sliderPressed.connect(
+            lambda: log_debug(f"Slider pressed: {self._channel_key} streaming")
+        )
 
         self._mon_slider.sliderReleased.connect(
             lambda: self._emit("monitoring", self._mon_slider.value())
@@ -115,6 +125,7 @@ class ChannelGroup(QGroupBox):
         return slider, value_label, row, left_label
 
     def _emit(self, slider_key: str, value: int) -> None:
+        log_debug(f"Slider released: {self._channel_key} {slider_key} = {value}")
         self.volumeChanged.emit(self._channel_key, slider_key, value)
 
     def set_streamer_mode(self, enabled: bool) -> None:
@@ -175,8 +186,11 @@ class MixerWidget(QWidget):
         self._channels: dict[str, ChannelGroup] = {}
         self._lock_count = 0  # > 0 if any slider is being dragged
         self._streamer_mode = True
+        # Previous snapshot for diff-based refresh logging
+        self._prev_snapshot: Snapshot | None = None
 
         self._build_ui()
+        log_debug("MixerWidget UI built")
         self.refresh_all()
 
     def is_locked(self) -> bool:
@@ -323,7 +337,7 @@ class MixerWidget(QWidget):
         self._version_label = QLabel(
             f'<a href="https://github.com/Brett-Now/SonarMix" '
             f'style="color: {self._theme.text_muted}; text-decoration: none; '
-            f'font-size: 9pt;">GitHub  v1.1.0</a>'
+            f'font-size: 9pt;">GitHub  v1.1.1</a>'
         )
         self._version_label.setOpenExternalLinks(True)
         mute_row.addWidget(self._version_label)
@@ -354,6 +368,8 @@ class MixerWidget(QWidget):
     def _toggle_all_monitoring(self) -> None:
         """Toggle mute for all monitoring sliders."""
         muted = self._mute_mon_btn.isChecked()
+        state = "MUTED" if muted else "UNMUTED"
+        log_info(f"Mute-all monitoring: {state}")
         for key in CHANNEL_KEYS:
             self._sonar.mute(key, muted, streamer_slider="monitoring")
         self.refresh_all()
@@ -361,6 +377,8 @@ class MixerWidget(QWidget):
     def _toggle_all_streaming(self) -> None:
         """Toggle mute for all streaming sliders."""
         muted = self._mute_stm_btn.isChecked()
+        state = "MUTED" if muted else "UNMUTED"
+        log_info(f"Mute-all streaming: {state}")
         for key in CHANNEL_KEYS:
             self._sonar.mute(key, muted, streamer_slider="streaming")
         self.refresh_all()
@@ -368,6 +386,8 @@ class MixerWidget(QWidget):
     def _toggle_all_classic(self) -> None:
         """Toggle mute for all channels (Classic mode — single slider per channel)."""
         muted = self._mute_all_btn.isChecked()
+        state = "MUTED" if muted else "UNMUTED"
+        log_info(f"Mute-all classic: {state}")
         for key in CHANNEL_KEYS:
             self._sonar.mute(key, muted, streamer_slider=None)
         self.refresh_all()
@@ -379,6 +399,8 @@ class MixerWidget(QWidget):
         enabled = self._mode_toggle.value() == 1
         if enabled == self._streamer_mode:
             return
+        mode_str = "Streamer" if enabled else "Classic"
+        log_info(f"Streamer mode toggle clicked → {mode_str}")
         self._streamer_mode = enabled
         self._apply_mode_visual()
         try:
@@ -416,6 +438,7 @@ class MixerWidget(QWidget):
         """Toggle between Chinese and English."""
         from i18n import get_lang, set_lang
         new_lang = "en" if get_lang() == "zh" else "zh"
+        log_debug(f"Language toggle → {new_lang}")
         set_lang(new_lang)
 
     def _refresh_text(self) -> None:
@@ -452,11 +475,36 @@ class MixerWidget(QWidget):
     # ── Refresh ──────────────────────────────────────────────────────
 
     def refresh_all(self) -> None:
-        """Fetch full volume data from Sonar and update all sliders."""
+        """Fetch full volume data from Sonar and update all sliders.
+        Compares against the previous snapshot and logs only changed values
+        at DEBUG level (avoids flooding the log on every 2s poll).
+        """
         try:
             snap = self._sonar.snapshot()
         except Exception:
             return  # GG not running or API unreachable — silently skip
+
+        # Diff against previous snapshot (if available)
+        if self._prev_snapshot is not None:
+            changed: list[str] = []
+            for key in CHANNEL_KEYS:
+                if key not in self._channels:
+                    continue
+                for sl in ("monitoring", "streaming"):
+                    try:
+                        old_v = round(self._prev_snapshot.get(key, sl) * 100)
+                        new_v = round(snap.get(key, sl) * 100)
+                        if old_v != new_v:
+                            changed.append(f"{key}/{sl} {old_v}%→{new_v}%")
+                        old_m = self._prev_snapshot.is_muted(key, sl)
+                        new_m = snap.is_muted(key, sl)
+                        if old_m != new_m:
+                            changed.append(f"{key}/{sl} {'🔇' if new_m else '🔊'}")
+                    except KeyError:
+                        pass
+            if changed:
+                log_debug(f"Refresh diff ({len(changed)} change(s)): {'; '.join(changed)}")
+        self._prev_snapshot = snap
 
         for key in CHANNEL_KEYS:
             if key not in self._channels:
@@ -488,11 +536,13 @@ class MixerWidget(QWidget):
     def changeEvent(self, event: Any) -> None:  # noqa: N802
         """Minimize → hide to tray."""
         if event.type() == event.Type.WindowStateChange and self.isMinimized():
+            log_debug("Window minimized → hidden to tray")
             self.hide()
         super().changeEvent(event)
 
     def closeEvent(self, event: Any) -> None:  # noqa: N802
         """X → quit app."""
+        log_debug("Window close button clicked → quitting")
         self.quitRequested.emit()
         event.accept()
 

@@ -21,9 +21,22 @@
 ## 截图
 
 <p align="center">
-  <img src="screenshots/screenshot-streamer.png" height="360" alt="Streamer 模式"/>
-  &nbsp;
-  <img src="screenshots/screenshot-settings.png" height="360" alt="设置界面"/>
+  <table align="center">
+    <tr>
+      <td align="center"><b>Classic 模式</b></td>
+      <td align="center"><b>Streamer 模式</b></td>
+    </tr>
+    <tr>
+      <td align="center"><img src="screenshots/screenshot-classic.png" alt="Classic 模式"/></td>
+      <td align="center"><img src="screenshots/screenshot-streamer.png" alt="Streamer 模式"/></td>
+    </tr>
+    <tr>
+      <td align="center" colspan="2"><b>设置界面</b></td>
+    </tr>
+    <tr>
+      <td align="center" colspan="2"><img src="screenshots/screenshot-settings.png" alt="设置界面"/></td>
+    </tr>
+  </table>
 </p>
 
 ---
@@ -131,7 +144,7 @@ SonarMix/
 
 ## 致谢
 
-本项目基于 [**steelseries-sonar-py**](https://github.com/Mark7888/steelseries-sonar-py) 构建，由 [Mark7888](https://github.com/Mark7888) 开发——该库封装了 SteelSeries GG Sonar 的本地 HTTP API，所有音量读写与模式切换均通过此库完成。
+本项目基于 Mark7888 的 [**steelseries-sonar-py**](https://github.com/Mark7888/steelseries-sonar-py)，该库封装了 SteelSeries GG Sonar 的本地 HTTP API。
 
 ---
 

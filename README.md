@@ -21,9 +21,22 @@
 ## Screenshots
 
 <p align="center">
-  <img src="screenshots/screenshot-streamer.png" height="360" alt="Streamer Mode"/>
-  &nbsp;
-  <img src="screenshots/screenshot-settings.png" height="360" alt="Settings"/>
+  <table align="center">
+    <tr>
+      <td align="center"><b>Classic Mode</b></td>
+      <td align="center"><b>Streamer Mode</b></td>
+    </tr>
+    <tr>
+      <td align="center"><img src="screenshots/screenshot-classic.png" alt="Classic Mode"/></td>
+      <td align="center"><img src="screenshots/screenshot-streamer.png" alt="Streamer Mode"/></td>
+    </tr>
+    <tr>
+      <td align="center" colspan="2"><b>Settings</b></td>
+    </tr>
+    <tr>
+      <td align="center" colspan="2"><img src="screenshots/screenshot-settings.png" alt="Settings"/></td>
+    </tr>
+  </table>
 </p>
 
 ---
@@ -131,7 +144,7 @@ SonarMix/
 
 ## Acknowledgments
 
-This project is built on [**steelseries-sonar-py**](https://github.com/Mark7888/steelseries-sonar-py) by [Mark7888](https://github.com/Mark7888) — the Python wrapper for SteelSeries GG Sonar's local HTTP API. All volume read/write and mode switching goes through this library.
+This project is built on [**steelseries-sonar-py**](https://github.com/Mark7888/steelseries-sonar-py) by [Mark7888](https://github.com/Mark7888), the Python wrapper for SteelSeries GG Sonar's local HTTP API.
 
 ---
 
